@@ -127,7 +127,9 @@ private struct DetailStrip: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity)
             .scrollIndicators(.hidden)
             .frame(maxHeight: 72)
 
