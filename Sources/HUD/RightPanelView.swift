@@ -31,6 +31,14 @@ struct RightPanelView: View {
         .padding(.horizontal, Theme.Spacing.lg)
         .padding(.top, Theme.Spacing.lg)
         .padding(.bottom, Theme.Spacing.lg)
+        // LazyVGrid's .flexible() columns need a concrete width to
+        // distribute space across. Nothing else in this chain pins one
+        // down top-down (ScrollView -> LazyVGrid alone doesn't guarantee
+        // that propagates), so without this the grid falls back to some
+        // oversized default and spreads the two columns far apart — the
+        // exact "huge gap between tiles" bug. Anchoring it explicitly
+        // here removes the ambiguity outright.
+        .frame(width: PanelController.rightPanelWidth)
         .glassBackdrop()
         .ignoresSafeArea()
     }
