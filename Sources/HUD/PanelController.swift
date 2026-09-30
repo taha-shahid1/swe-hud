@@ -3,7 +3,10 @@ import SwiftUI
 
 /// Owns the left and right overlay panels and toggles them together.
 final class PanelController {
-    static let panelWidth: CGFloat = 300
+    static let leftPanelWidth: CGFloat = 300
+    /// Wider than the left panel — a 2-column tile grid needs more
+    /// breathing room per tile than a single-column row list does.
+    static let rightPanelWidth: CGFloat = 340
     /// Gap from the top of the screen.
     static let topMargin: CGFloat = 12
     /// Gap from the left/right screen edges — floating, not edge-to-edge.
@@ -16,6 +19,7 @@ final class PanelController {
     private let leftPanel: HUDPanel
     private let rightPanel: HUDPanel
     private let threadStore = ThreadStore()
+    private let sessionStore = SessionStore()
     private let appState = HUDAppState()
     private(set) var isVisible = false
     private var keyMonitor: Any?
@@ -30,7 +34,7 @@ final class PanelController {
         leftPanel.contentView = NSHostingView(
             rootView: LeftPanelView(store: threadStore, appState: appState)
         )
-        rightPanel.contentView = NSHostingView(rootView: RightPanelView())
+        rightPanel.contentView = NSHostingView(rootView: RightPanelView(store: sessionStore))
 
         // SwiftUI's `.onExitCommand` needs the view to be part of macOS's
         // focus system, which a raw AppKit-hosted NSPanel never establishes.
@@ -105,12 +109,15 @@ final class PanelController {
     /// The panels' resting frames on whichever screen the pointer is on, so
     /// the overlay always shows up where you're actually looking.
     private static func targetFrames() -> (left: NSRect, right: NSRect) {
-        let width = panelWidth
         let frame = activeScreenFrame()
         let height = min(maxHeight, frame.height - topMargin * 2)
         let y = frame.maxY - topMargin - height
-        let left = NSRect(x: frame.minX + horizontalMargin, y: y, width: width, height: height)
-        let right = NSRect(x: frame.maxX - width - horizontalMargin, y: y, width: width, height: height)
+        let left = NSRect(
+            x: frame.minX + horizontalMargin, y: y, width: leftPanelWidth, height: height
+        )
+        let right = NSRect(
+            x: frame.maxX - rightPanelWidth - horizontalMargin, y: y, width: rightPanelWidth, height: height
+        )
         return (left, right)
     }
 

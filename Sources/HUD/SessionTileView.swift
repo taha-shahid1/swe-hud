@@ -1,0 +1,87 @@
+import SwiftUI
+
+struct SessionTileView: View {
+    let session: SessionItem
+    let isSelected: Bool
+
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(spacing: Theme.Spacing.xs) {
+            glyph
+                .frame(height: 30)
+
+            Text(session.project)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Text(session.state.label)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Theme.Spacing.sm + 2)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
+                .fill(Color.primary.opacity(isSelected ? 0.1 : (hovering ? 0.05 : 0)))
+        )
+        .opacity(session.state == .stale ? 0.5 : 1)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch session.state {
+        case .needsYou:
+            NeedsYouGlyph()
+        case .working:
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+        case .idle:
+            Image(systemName: "moon.zzz.fill")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+        case .stale:
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
+/// Same radial-glow + radar-pulse language as StatusDot's needs-you state,
+/// scaled up for a tile glyph. The one accent color, the one animation.
+private struct NeedsYouGlyph: View {
+    @State private var pulsing = false
+    private let size: CGFloat = 12
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Theme.accent.opacity(0.5))
+                .frame(width: size, height: size)
+                .scaleEffect(pulsing ? 2.2 : 1)
+                .opacity(pulsing ? 0 : 0.7)
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Theme.accent.opacity(0.95), Theme.accent],
+                        center: UnitPoint(x: 0.35, y: 0.3),
+                        startRadius: 0,
+                        endRadius: size * 0.9
+                    )
+                )
+                .frame(width: size, height: size)
+                .shadow(color: Theme.accent.opacity(0.7), radius: 4)
+        }
+        .frame(width: 26, height: 26)
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
+                pulsing = true
+            }
+        }
+    }
+}
