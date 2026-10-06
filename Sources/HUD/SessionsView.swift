@@ -25,16 +25,13 @@ struct SessionsView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                         let (live, detached) = sections
-                        if !live.isEmpty { grid(live) }
+                        if !live.isEmpty {
+                            sectionHeader("Attached", icon: "eye")
+                            grid(live)
+                        }
                         if !detached.isEmpty {
-                            HStack(spacing: Theme.Spacing.xs) {
-                                Image(systemName: "eye.slash")
-                                    .font(.system(size: 9.5, weight: .semibold))
-                                Text("Detached")
-                                    .font(.system(size: 10.5, weight: .semibold))
-                            }
-                            .foregroundStyle(.tertiary)
-                            .padding(.top, live.isEmpty ? 0 : Theme.Spacing.xs)
+                            sectionHeader("Detached", icon: "eye.slash")
+                                .padding(.top, live.isEmpty ? 0 : Theme.Spacing.xs)
                             grid(detached)
                         }
                     }
@@ -95,6 +92,16 @@ struct SessionsView: View {
         stride(from: 0, to: items.count, by: columnCount).map {
             Array(items[$0..<min($0 + columnCount, items.count)])
         }
+    }
+
+    private func sectionHeader(_ title: String, icon: String) -> some View {
+        HStack(spacing: Theme.Spacing.xs) {
+            Image(systemName: icon)
+                .font(.system(size: 9.5, weight: .semibold))
+            Text(title)
+                .font(.system(size: 10.5, weight: .semibold))
+        }
+        .foregroundStyle(.tertiary)
     }
 
     private func grid(_ items: [SessionItem]) -> some View {
