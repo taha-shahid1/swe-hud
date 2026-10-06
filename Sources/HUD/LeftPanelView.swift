@@ -11,6 +11,8 @@ struct LeftPanelView: View {
     @State private var draggingID: UUID?
     @State private var dragOffset: CGFloat = 0
     @State private var dropTargetID: UUID?
+    /// "Clear done" is two clicks: the first arms it for a few seconds.
+    @State private var confirmClearDone = false
     @State private var rowFrames: [UUID: CGRect] = [:]
     /// Drag auto-scroll: the pointer is tracked in the (non-scrolling) viewport,
     /// so the dragged row can be kept under it while content scrolls beneath.
@@ -71,6 +73,9 @@ struct LeftPanelView: View {
                                     listFocused = true
                                 }
                                 .gesture(reorderGesture(for: thread))
+                                .contextMenu {
+                                    Button("Delete", role: .destructive) { delete(thread.id) }
+                                }
                             }
                         }
                         .coordinateSpace(name: Self.listSpace)
@@ -148,15 +153,7 @@ struct LeftPanelView: View {
                         guard appState.editingID == nil, let id = appState.selectedID else {
                             return .ignored
                         }
-                        // Select the neighbor first so focus doesn't fall off the list.
-                        let items = store.sorted
-                        if let idx = items.firstIndex(where: { $0.id == id }) {
-                            let neighbor = items.indices.contains(idx + 1) ? items[idx + 1] : (idx > 0 ? items[idx - 1] : nil)
-                            appState.selectedID = neighbor?.id
-                        }
-                        withAnimation(Theme.listSpring) {
-                            store.remove(id)
-                        }
+                        delete(id)
                         return .handled
                     }
                 }
@@ -187,7 +184,40 @@ struct LeftPanelView: View {
                     .padding(.vertical, 1)
                     .background(Capsule().fill(Color.primary.opacity(0.08)))
             }
+            let doneCount = store.threads.filter { $0.status == .done }.count
+            if doneCount > 0 {
+                Spacer(minLength: Theme.Spacing.sm)
+                Button(confirmClearDone ? "Clear \(doneCount) done?" : "Clear done") {
+                    if confirmClearDone {
+                        clearDone()
+                    } else {
+                        confirmClearDone = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { confirmClearDone = false }
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: confirmClearDone ? .semibold : .regular))
+                .foregroundStyle(confirmClearDone ? .primary : .tertiary)
+            }
         }
+    }
+
+    /// Selects the neighbor first so focus doesn't fall off the list.
+    private func delete(_ id: UUID) {
+        let items = store.sorted
+        if appState.selectedID == id, let idx = items.firstIndex(where: { $0.id == id }) {
+            let neighbor = items.indices.contains(idx + 1) ? items[idx + 1] : (idx > 0 ? items[idx - 1] : nil)
+            appState.selectedID = neighbor?.id
+        }
+        withAnimation(Theme.listSpring) { store.remove(id) }
+    }
+
+    private func clearDone() {
+        confirmClearDone = false
+        if let id = appState.selectedID, store.threads.first(where: { $0.id == id })?.status == .done {
+            appState.selectedID = store.sorted.first { $0.status != .done }?.id
+        }
+        withAnimation(Theme.listSpring) { store.removeDone() }
     }
 
     private static let listSpace = "threadList"

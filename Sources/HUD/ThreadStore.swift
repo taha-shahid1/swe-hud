@@ -72,6 +72,11 @@ final class ThreadStore {
         save()
     }
 
+    func removeDone() {
+        threads.removeAll { $0.status == .done }
+        save()
+    }
+
     func remove(_ id: UUID) {
         threads.removeAll { $0.id == id }
         save()

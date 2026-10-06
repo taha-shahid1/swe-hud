@@ -16,4 +16,6 @@ store.move(a.id, to: b.id); assert(titles() == "dcba") // drag down: lands below
 store.move(b.id, to: c.id); assert(titles() == "dbca") // drag up: lands above target
 store.move(d.id, to: a.id); assert(titles() == "dbca") // different group: no-op
 assert(ThreadStore().sorted.map(\.title).joined() == "dbca") // order persists
+store.setStatus(c.id, status: .done)
+store.removeDone(); assert(titles() == "dba")          // only done threads go, order kept
 print("ok")
