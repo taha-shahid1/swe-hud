@@ -23,13 +23,19 @@ struct SessionsView: View {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: Theme.Spacing.sm) {
-                        ForEach(store.sorted) { session in
-                            SessionTileView(session: session, isSelected: selectedID == session.id, isActive: gridFocused)
-                                .onTapGesture {
-                                    selectedID = session.id
-                                    gridFocused = true
-                                }
+                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                        let (live, detached) = sections
+                        if !live.isEmpty { grid(live) }
+                        if !detached.isEmpty {
+                            HStack(spacing: Theme.Spacing.xs) {
+                                Image(systemName: "eye.slash")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                Text("Detached")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                            }
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, live.isEmpty ? 0 : Theme.Spacing.xs)
+                            grid(detached)
                         }
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { gridHeight = $0 }
@@ -56,20 +62,10 @@ struct SessionsView: View {
                     if selectedID == nil { selectedID = store.sorted.first?.id }
                     gridFocused = true
                 }
-                .onKeyPress(.leftArrow) {
-                    // Off the grid's left edge: back to the thread list.
-                    if let idx = store.sorted.firstIndex(where: { $0.id == selectedID }),
-                       idx % Self.columnCount == 0
-                    {
-                        appState.focusThreads()
-                    } else {
-                        move(-1)
-                    }
-                    return .handled
-                }
-                .onKeyPress(.rightArrow) { move(1); return .handled }
-                .onKeyPress(.upArrow) { move(-Self.columnCount); return .handled }
-                .onKeyPress(.downArrow) { move(Self.columnCount); return .handled }
+                .onKeyPress(.leftArrow) { move(.left); return .handled }
+                .onKeyPress(.rightArrow) { move(.right); return .handled }
+                .onKeyPress(.upArrow) { move(.up); return .handled }
+                .onKeyPress(.downArrow) { move(.down); return .handled }
                 .onKeyPress(.return) { jumpToSelected(); return .handled }
 
                 if let selected = store.sorted.first(where: { $0.id == selectedID }) {
@@ -83,15 +79,58 @@ struct SessionsView: View {
         }
     }
 
-    private func move(_ delta: Int) {
-        let items = store.sorted
-        guard !items.isEmpty else { return }
-        guard let id = selectedID, let idx = items.firstIndex(where: { $0.id == id }) else {
-            selectedID = items.first?.id
+    /// Visible sessions, then detached ones in their own section below.
+    private var sections: (live: [SessionItem], detached: [SessionItem]) {
+        let all = store.sorted
+        return (all.filter { $0.state != .detached }, all.filter { $0.state == .detached })
+    }
+
+    /// Grid rows across both sections, so ↑/↓ crosses between them by column.
+    private var rows: [[SessionItem]] {
+        let (live, detached) = sections
+        return Self.chunked(live) + Self.chunked(detached)
+    }
+
+    private static func chunked(_ items: [SessionItem]) -> [[SessionItem]] {
+        stride(from: 0, to: items.count, by: columnCount).map {
+            Array(items[$0..<min($0 + columnCount, items.count)])
+        }
+    }
+
+    private func grid(_ items: [SessionItem]) -> some View {
+        LazyVGrid(columns: columns, spacing: Theme.Spacing.sm) {
+            ForEach(items) { session in
+                SessionTileView(session: session, isSelected: selectedID == session.id, isActive: gridFocused)
+                    .onTapGesture {
+                        selectedID = session.id
+                        gridFocused = true
+                    }
+            }
+        }
+    }
+
+    private enum Direction { case left, right, up, down }
+
+    private func move(_ direction: Direction) {
+        let rows = rows
+        guard !rows.isEmpty else { return }
+        guard let r = rows.firstIndex(where: { $0.contains { $0.id == selectedID } }),
+              let c = rows[r].firstIndex(where: { $0.id == selectedID })
+        else {
+            selectedID = rows[0][0].id
             return
         }
-        let newIndex = min(max(idx + delta, 0), items.count - 1)
-        selectedID = items[newIndex].id
+        switch direction {
+        case .left:
+            // Off the grid's left edge: back to the thread list.
+            if c == 0 { appState.focusThreads() } else { selectedID = rows[r][c - 1].id }
+        case .right:
+            if c + 1 < rows[r].count { selectedID = rows[r][c + 1].id }
+            else if r + 1 < rows.count { selectedID = rows[r + 1][0].id }
+        case .up, .down:
+            let nr = min(max(r + (direction == .up ? -1 : 1), 0), rows.count - 1)
+            selectedID = rows[nr][min(c, rows[nr].count - 1)].id
+        }
     }
 
     private func jumpToSelected() {
