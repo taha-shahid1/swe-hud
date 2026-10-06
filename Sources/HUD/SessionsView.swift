@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SessionsView: View {
     let store: SessionStore
+    let appState: HUDAppState
     var onJumped: () -> Void
 
     @State private var selectedID: String?
@@ -24,7 +25,7 @@ struct SessionsView: View {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: Theme.Spacing.sm) {
                         ForEach(store.sorted) { session in
-                            SessionTileView(session: session, isSelected: selectedID == session.id)
+                            SessionTileView(session: session, isSelected: selectedID == session.id, isActive: gridFocused)
                                 .onTapGesture {
                                     selectedID = session.id
                                     gridFocused = true
@@ -55,7 +56,17 @@ struct SessionsView: View {
                     if selectedID == nil { selectedID = store.sorted.first?.id }
                     gridFocused = true
                 }
-                .onKeyPress(.leftArrow) { move(-1); return .handled }
+                .onKeyPress(.leftArrow) {
+                    // Off the grid's left edge: back to the thread list.
+                    if let idx = store.sorted.firstIndex(where: { $0.id == selectedID }),
+                       idx % Self.columnCount == 0
+                    {
+                        appState.focusThreads()
+                    } else {
+                        move(-1)
+                    }
+                    return .handled
+                }
                 .onKeyPress(.rightArrow) { move(1); return .handled }
                 .onKeyPress(.upArrow) { move(-Self.columnCount); return .handled }
                 .onKeyPress(.downArrow) { move(Self.columnCount); return .handled }
@@ -65,6 +76,10 @@ struct SessionsView: View {
                     DetailStrip(session: selected, onJump: jumpToSelected)
                 }
             }
+        }
+        .onChange(of: appState.sessionsFocusTrigger) { _, _ in
+            if selectedID == nil { selectedID = store.sorted.first?.id }
+            gridFocused = true
         }
     }
 

@@ -4,6 +4,8 @@ struct ThreadRowView: View {
     let thread: ThreadItem
     let isSelected: Bool
     let isEditing: Bool
+    /// Whether this panel has keyboard focus; the selection dims when it doesn't.
+    var isActive = true
     var onCommitNextStep: (String) -> Void
 
     @State private var draft: String = ""
@@ -100,7 +102,7 @@ struct ThreadRowView: View {
         .padding(.vertical, Theme.Spacing.sm)
         .background(
             RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
-                .fill(Color.primary.opacity(isSelected ? 0.09 : (hovering ? 0.05 : 0)))
+                .fill(Color.primary.opacity(isSelected ? (isActive ? 0.09 : 0.045) : (hovering ? 0.05 : 0)))
         )
         .opacity(thread.status == .done ? 0.55 : 1)
         .contentShape(Rectangle())

@@ -3,6 +3,8 @@ import SwiftUI
 struct SessionTileView: View {
     let session: SessionItem
     let isSelected: Bool
+    /// Whether this panel has keyboard focus; the selection dims when it doesn't.
+    var isActive = true
 
     @State private var hovering = false
 
@@ -34,7 +36,7 @@ struct SessionTileView: View {
         .padding(.horizontal, Theme.Spacing.xs)
         .background(
             RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
-                .fill(Color.primary.opacity(isSelected ? 0.1 : (hovering ? 0.05 : 0)))
+                .fill(Color.primary.opacity(isSelected ? (isActive ? 0.1 : 0.05) : (hovering ? 0.05 : 0)))
         )
         .opacity(session.state == .stale ? 0.5 : 1)
         .contentShape(Rectangle())

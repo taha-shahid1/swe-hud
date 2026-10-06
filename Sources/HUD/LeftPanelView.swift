@@ -46,6 +46,7 @@ struct LeftPanelView: View {
                                     thread: thread,
                                     isSelected: appState.selectedID == thread.id,
                                     isEditing: appState.editingID == thread.id,
+                                    isActive: listFocused || appState.editingID == thread.id,
                                     onCommitNextStep: { text in
                                         withAnimation(Theme.listSpring) {
                                             store.setNextStep(thread.id, text: text)
@@ -147,6 +148,11 @@ struct LeftPanelView: View {
                         }
                         return .handled
                     }
+                    .onKeyPress(.rightArrow) {
+                        guard appState.editingID == nil else { return .ignored }
+                        appState.focusSessions()
+                        return .handled
+                    }
                     .onKeyPress("n") {
                         guard appState.editingID == nil else { return .ignored }
                         appState.requestCapture()
@@ -168,6 +174,10 @@ struct LeftPanelView: View {
                         return .handled
                     }
                 }
+        }
+        .onChange(of: appState.threadsFocusTrigger) { _, _ in
+            // No list yet: land in the capture field instead.
+            if store.sorted.isEmpty { appState.requestCapture() } else { listFocused = true }
         }
         .padding(Theme.Spacing.lg)
         .frame(width: PanelController.leftPanelWidth)

@@ -34,9 +34,20 @@ final class PanelController {
         leftPanel.contentView = NSHostingView(
             rootView: LeftPanelView(store: threadStore, appState: appState)
         )
-        rightPanel.contentView = NSHostingView(rootView: RightPanelView(store: sessionStore) { [weak self] in
+        rightPanel.contentView = NSHostingView(rootView: RightPanelView(store: sessionStore, appState: appState) { [weak self] in
             self?.hide()
         })
+
+        appState.focusSessions = { [weak self] in
+            guard let self, !self.sessionStore.sorted.isEmpty else { return }
+            self.rightPanel.makeKey()
+            self.appState.sessionsFocusTrigger += 1
+        }
+        appState.focusThreads = { [weak self] in
+            guard let self else { return }
+            self.leftPanel.makeKey()
+            self.appState.threadsFocusTrigger += 1
+        }
 
         // SwiftUI's `.onExitCommand` needs the view to be part of macOS's
         // focus system, which a raw AppKit-hosted NSPanel never establishes.
