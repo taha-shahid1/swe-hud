@@ -240,43 +240,53 @@ final class SessionStore {
     }
 
     /// Runs `tmux attach` on the pane (attach -t %id also makes it current) in a new
-    /// tab of Terminal's front window, or a new window if Terminal has none.
-    /// Terminal can't script "new tab", so the tab comes from ⌘T via System Events
-    /// (needs Accessibility). The command only goes into that tab once Terminal is
-    /// frontmost and the tab count rose; otherwise it would land in a busy tab.
+    /// tab of Terminal's front window; a new window only when Terminal has none.
+    /// Terminal can't script "new tab", so the tab comes from ⌘T via System Events,
+    /// which needs Accessibility. If no tab appears, nothing opens: never a stray
+    /// window, and never typing into an existing (possibly busy) tab.
     private static func openTerminalAttached(tmux: String, pane: String) {
         guard pane.range(of: #"^%\d+$"#, options: .regularExpression) != nil,
               !tmux.contains("\""), !tmux.contains("\\")
         else { return }
         let command = "'\(tmux)' attach -t \(pane)"
+        // Prompts (System Settings → Accessibility) when not yet granted.
+        let trusted = AXIsProcessTrustedWithOptions(
+            [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        )
         let script = """
         tell application "Terminal"
             if (count of windows) is 0 then
                 do script "\(command)"
-            else
                 activate
-                delay 0.2
-                set tabCount to count of tabs of front window
-                set opened to false
-                try
-                    tell application "System Events"
-                        if frontmost of process "Terminal" then
-                            keystroke "t" using command down
-                            set opened to true
-                        end if
-                    end tell
-                end try
-                if opened then delay 0.3
-                if opened and (count of tabs of front window) > tabCount then
-                    do script "\(command)" in front window
-                else
-                    do script "\(command)"
-                end if
+                return "window"
             end if
-            activate
         end tell
+        if not \(trusted) then return "needs-accessibility"
+        tell application "Terminal" to activate
+        tell application "System Events"
+            repeat 20 times
+                if frontmost of process "Terminal" then exit repeat
+                delay 0.05
+            end repeat
+            if not (frontmost of process "Terminal") then return "terminal-not-frontmost"
+        end tell
+        tell application "Terminal" to set tabCount to count of tabs of front window
+        tell application "System Events" to keystroke "t" using command down
+        repeat 20 times
+            delay 0.05
+            tell application "Terminal"
+                if (count of tabs of front window) > tabCount then
+                    do script "\(command)" in front window
+                    return "tab"
+                end if
+            end tell
+        end repeat
+        return "no-tab-appeared"
         """
-        NSAppleScript(source: script)?.executeAndReturnError(nil)
+        var error: NSDictionary?
+        let result = NSAppleScript(source: script)?.executeAndReturnError(&error).stringValue
+        // `log show --predicate 'process == "HUD"' --last 5m` to see why a jump didn't open.
+        NSLog("HUD attach %@: %@", pane, result ?? "error \(error ?? [:])")
     }
 
     /// Nearest ancestor (or self) that's a GUI app: Terminal, iTerm, Ghostty, VS Code...
