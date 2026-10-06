@@ -4,7 +4,8 @@ enum SessionState: String, Codable, CaseIterable {
     case needsYou
     case working
     case idle
-    case stale
+    /// Alive, but in a tmux session with no terminal attached: nobody can see it.
+    case detached
 
     /// Lower sorts first — same "what needs you" priority as threads.
     var sortPriority: Int {
@@ -12,7 +13,7 @@ enum SessionState: String, Codable, CaseIterable {
         case .needsYou: return 0
         case .working: return 1
         case .idle: return 2
-        case .stale: return 3
+        case .detached: return 3
         }
     }
 
@@ -21,7 +22,7 @@ enum SessionState: String, Codable, CaseIterable {
         case .needsYou: return "needs you"
         case .working: return "working"
         case .idle: return "idle"
-        case .stale: return "stale"
+        case .detached: return "detached"
         }
     }
 }

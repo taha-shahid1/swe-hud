@@ -163,7 +163,7 @@ private struct DetailStrip: View {
                 HStack(spacing: 3) {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 9, weight: .semibold))
-                    Text("jump in")
+                    Text(session.state == .detached ? "open in Terminal" : "jump in")
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(Theme.accent)

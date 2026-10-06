@@ -38,7 +38,7 @@ struct SessionTileView: View {
             RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
                 .fill(Color.primary.opacity(isSelected ? (isActive ? 0.1 : 0.05) : (hovering ? 0.05 : 0)))
         )
-        .opacity(session.state == .stale ? 0.5 : 1)
+        .opacity(session.state == .detached ? 0.5 : 1)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }
@@ -56,8 +56,8 @@ struct SessionTileView: View {
             Image(systemName: "moon.zzz.fill")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.secondary)
-        case .stale:
-            Image(systemName: "questionmark.circle")
+        case .detached:
+            Image(systemName: "eye.slash")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.tertiary)
         }

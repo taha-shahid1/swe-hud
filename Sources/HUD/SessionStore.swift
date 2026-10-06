@@ -62,27 +62,37 @@ final class SessionStore {
             guard let self else { return }
             let agents = Self.fetchAgents()
             let overlay = Self.loadOverlay(self.overlayFileURL)
+            let panes = Self.tmuxPaneAttachment()
             let merged = agents
                 .filter { $0.kind == "interactive" }
-                .compactMap { agent in agent.pid.map { self.buildItem(from: agent, pid: $0, overlay: overlay[agent.sessionId]) } }
+                .compactMap { agent in
+                    agent.pid.map { self.buildItem(from: agent, pid: $0, overlay: overlay[agent.sessionId], panes: panes) }
+                }
             DispatchQueue.main.async {
                 self.sessions = merged
             }
         }
     }
 
-    private func buildItem(from agent: AgentEntry, pid: Int, overlay: OverlayEntry?) -> SessionItem {
-        let needsYou = overlay?.needsYou ?? false
+    private func buildItem(
+        from agent: AgentEntry, pid: Int, overlay: OverlayEntry?, panes: [String: Bool]
+    ) -> SessionItem {
+        let tty = Self.tty(forPID: pid)
+        let detached = tty.flatMap { panes[$0] } == false
+        let state: SessionState =
+            overlay?.needsYou == true ? .needsYou
+            : detached ? .detached
+            : agent.status == "busy" ? .working : .idle
         let recap = transcript(for: agent.sessionId).flatMap { recaps.recap(in: $0) }
         return SessionItem(
             id: agent.sessionId,
             name: agent.name,
             cwd: agent.cwd,
             branch: branch(for: agent.cwd),
-            state: needsYou ? .needsYou : (agent.status == "busy" ? .working : .idle),
+            state: state,
             note: recap?.text,
             notedAt: recap?.at,
-            tty: Self.tty(forPID: pid),
+            tty: tty,
             pid: Int32(pid),
             updatedAt: Date()
         )
@@ -171,15 +181,20 @@ final class SessionStore {
             var hostPID = session.pid.map(Int.init)
             if let tty = session.tty, let tmux = Self.resolveBinary("tmux"),
                let pane = Self.fields(Self.run(tmux, ["list-panes", "-a", "-F", "#{pane_tty} #{pane_id}"]))
-                   .first(where: { $0.first == tty })?.last,
-               let client = Self.fields(Self.run(tmux, ["list-clients", "-F", "#{client_activity} #{client_tty} #{client_pid}"]))
-                   .filter({ $0.count == 3 })
-                   .max(by: { (Int($0[0]) ?? 0) < (Int($1[0]) ?? 0) })
+                   .first(where: { $0.first == tty })?.last
             {
-                // Explicit -c: run from outside tmux there's no "current client".
-                _ = Self.run(tmux, ["switch-client", "-c", client[1], "-t", pane])
                 _ = Self.run(tmux, ["select-window", "-t", pane])
                 _ = Self.run(tmux, ["select-pane", "-t", pane])
+                guard let client = Self.fields(Self.run(tmux, ["list-clients", "-F", "#{client_activity} #{client_tty} #{client_pid}"]))
+                    .filter({ $0.count == 3 })
+                    .max(by: { (Int($0[0]) ?? 0) < (Int($1[0]) ?? 0) })
+                else {
+                    // No terminal attached anywhere: open one on this pane.
+                    DispatchQueue.main.async { Self.openTerminalAttached(tmux: tmux, pane: pane) }
+                    return
+                }
+                // Explicit -c: run from outside tmux there's no "current client".
+                _ = Self.run(tmux, ["switch-client", "-c", client[1], "-t", pane])
                 hostTTY = client[1]
                 hostPID = Int(client[2])
             }
@@ -215,6 +230,21 @@ final class SessionStore {
         NSWorkspace.shared.openApplication(at: url, configuration: config)
     }
 
+    /// New Terminal window running `tmux attach` on the pane (attach -t %id also
+    /// makes that pane current). Same Automation permission as bringForward.
+    private static func openTerminalAttached(tmux: String, pane: String) {
+        guard pane.range(of: #"^%\d+$"#, options: .regularExpression) != nil,
+              !tmux.contains("\""), !tmux.contains("\\")
+        else { return }
+        let script = """
+        tell application "Terminal"
+            do script "'\(tmux)' attach -t \(pane)"
+            activate
+        end tell
+        """
+        NSAppleScript(source: script)?.executeAndReturnError(nil)
+    }
+
     /// Nearest ancestor (or self) that's a GUI app: Terminal, iTerm, Ghostty, VS Code...
     private static func hostingApp(of pid: Int) -> NSRunningApplication? {
         var parent: [Int: Int] = [:]
@@ -238,6 +268,17 @@ final class SessionStore {
 
     private static func fields(_ data: Data) -> [[String]] {
         lines(data).map { $0.split(separator: " ").map(String.init) }
+    }
+
+    /// pane tty -> whether its tmux session has a terminal attached. Empty when
+    /// tmux isn't installed or no server is running.
+    private static func tmuxPaneAttachment() -> [String: Bool] {
+        guard let tmux = resolveBinary("tmux") else { return [:] }
+        var result: [String: Bool] = [:]
+        for f in fields(run(tmux, ["list-panes", "-a", "-F", "#{pane_tty} #{session_attached}"])) where f.count == 2 {
+            result[f[0]] = (Int(f[1]) ?? 0) > 0
+        }
+        return result
     }
 
     private static func loadOverlay(_ url: URL) -> [String: OverlayEntry] {
