@@ -11,10 +11,19 @@ struct SessionTileView: View {
             glyph
                 .frame(height: 30)
 
-            Text(session.project)
+            Text(session.name ?? session.project)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+                .truncationMode(.middle)
+
+            if let branch = session.branch {
+                Text(branch)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
 
             Text(session.state.label)
                 .font(.system(size: 10))
@@ -22,6 +31,7 @@ struct SessionTileView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Theme.Spacing.sm + 2)
+        .padding(.horizontal, Theme.Spacing.xs)
         .background(
             RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
                 .fill(Color.primary.opacity(isSelected ? 0.1 : (hovering ? 0.05 : 0)))

@@ -2,15 +2,19 @@ import SwiftUI
 
 struct SessionsView: View {
     let store: SessionStore
+    var onJumped: () -> Void
 
     @State private var selectedID: String?
     @FocusState private var gridFocused: Bool
+    @State private var gridHeight: CGFloat = 0
 
     private let columns = [
         GridItem(.flexible(), spacing: Theme.Spacing.sm),
         GridItem(.flexible(), spacing: Theme.Spacing.sm),
     ]
     private static let columnCount = 2
+    /// Panel max height minus header, detail strip and padding.
+    private static let maxGridHeight = PanelController.maxHeight - 220
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -27,8 +31,11 @@ struct SessionsView: View {
                                 }
                         }
                     }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { gridHeight = $0 }
                 }
-                .scrollIndicators(.hidden)
+                // Exact + capped, same as the thread list (see LeftPanelView).
+                .frame(height: min(gridHeight, Self.maxGridHeight))
+                .scrollIndicators(.never)
                 .mask(
                     LinearGradient(
                         stops: [
@@ -73,9 +80,9 @@ struct SessionsView: View {
     }
 
     private func jumpToSelected() {
-        // TODO: AppleScript terminal-jump / VS Code companion extension —
-        // real Phase 3 infra, not wired up yet. This is the placeholder
-        // hook point once that lands.
+        guard let session = store.sorted.first(where: { $0.id == selectedID }) else { return }
+        store.jump(to: session)
+        onJumped()
     }
 
     private var emptyState: some View {
@@ -88,7 +95,7 @@ struct SessionsView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, Theme.Spacing.xl * 2)
+        .padding(.vertical, Theme.Spacing.xl)
     }
 }
 
@@ -98,6 +105,8 @@ struct SessionsView: View {
 private struct DetailStrip: View {
     let session: SessionItem
     var onJump: () -> Void
+
+    @State private var noteHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
@@ -123,15 +132,17 @@ private struct DetailStrip: View {
             // way to read it. This way nothing is ever lost, and the
             // detail strip can't push the panel past its fixed height.
             ScrollView {
-                Text(session.note ?? "No notes yet.")
+                Text(session.note ?? "No recap yet. Run /recap in the session.")
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(session.note == nil ? .tertiary : .secondary)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { noteHeight = $0 }
             }
             .frame(maxWidth: .infinity)
-            .scrollIndicators(.hidden)
-            .frame(maxHeight: 72)
+            .scrollIndicators(.never)
+            // Exact + capped (see LeftPanelView) so it can't collapse.
+            .frame(height: min(noteHeight, 72))
 
             Button(action: onJump) {
                 HStack(spacing: 3) {

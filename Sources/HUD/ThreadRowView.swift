@@ -11,6 +11,7 @@ struct ThreadRowView: View {
     @FocusState private var fieldFocused: Bool
 
     private var ageText: String? {
+        guard thread.status != .done else { return nil }
         let idle = Date().timeIntervalSince(thread.updatedAt)
         guard idle >= 30 * 60 else { return nil }
         let hours = Int(idle / 3600)
@@ -19,19 +20,30 @@ struct ThreadRowView: View {
         return "quiet \(max(1, Int(idle / 60)))m"
     }
 
+    /// The next step, or — only on the selected row — a hint for adding
+    /// one. Unselected rows without a step stay one line instead of
+    /// repeating filler text.
+    private var subtitle: (text: String, isHint: Bool)? {
+        if let step = thread.nextStep { return (step, false) }
+        return isSelected ? ("↩ add a next step", true) : nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            HStack(spacing: Theme.Spacing.sm) {
+            // Baseline, so the dot and key stay on the title's first line when it wraps.
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.sm) {
                 StatusDot(status: thread.status)
 
                 if !thread.key.isEmpty {
                     Text(thread.key)
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(
-                            RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
                                 .fill(Color.primary.opacity(0.07))
                         )
                 }
@@ -40,23 +52,15 @@ struct ThreadRowView: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(thread.status == .done ? .tertiary : .primary)
                     .strikethrough(thread.status == .done)
-                    .lineLimit(1)
+                    .lineLimit(isSelected ? nil : 1)
 
-                Spacer(minLength: Theme.Spacing.sm)
-
-                if let ageText {
-                    HStack(spacing: 3) {
-                        Image(systemName: "moon.zzz.fill")
-                            .font(.system(size: 9))
-                        Text(ageText)
-                            .font(.system(size: 11))
-                    }
-                    .foregroundStyle(.tertiary)
-                }
+                Spacer(minLength: 0)
             }
 
             if isEditing {
-                TextField("Next step…", text: $draft)
+                // Wraps as you type instead of scrolling sideways; Return still submits.
+                TextField("Next step…", text: $draft, axis: .vertical)
+                    .lineLimit(1...6)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundStyle(.primary)
@@ -69,12 +73,27 @@ struct ThreadRowView: View {
                     .onSubmit {
                         onCommitNextStep(draft)
                     }
-            } else {
-                Text(thread.nextStep ?? thread.summary)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.leading, 24)
+            } else if subtitle != nil || ageText != nil {
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.sm) {
+                    if let subtitle {
+                        Text(subtitle.text)
+                            .font(.system(size: 12))
+                            .foregroundStyle(subtitle.isHint ? .tertiary : .secondary)
+                            .lineLimit(isSelected ? nil : 1)
+                    }
+                    Spacer(minLength: 0)
+                    if let ageText {
+                        HStack(spacing: 3) {
+                            Image(systemName: "moon.zzz.fill")
+                                .font(.system(size: 9))
+                            Text(ageText)
+                                .font(.system(size: 11))
+                        }
+                        .foregroundStyle(.tertiary)
+                        .fixedSize()
+                    }
+                }
+                .padding(.leading, 24)
             }
         }
         .padding(.horizontal, Theme.Spacing.md)

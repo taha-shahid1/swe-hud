@@ -34,7 +34,9 @@ final class PanelController {
         leftPanel.contentView = NSHostingView(
             rootView: LeftPanelView(store: threadStore, appState: appState)
         )
-        rightPanel.contentView = NSHostingView(rootView: RightPanelView(store: sessionStore))
+        rightPanel.contentView = NSHostingView(rootView: RightPanelView(store: sessionStore) { [weak self] in
+            self?.hide()
+        })
 
         // SwiftUI's `.onExitCommand` needs the view to be part of macOS's
         // focus system, which a raw AppKit-hosted NSPanel never establishes.
@@ -62,18 +64,13 @@ final class PanelController {
         isVisible ? hide() : show()
     }
 
-    /// Opens the panel (if needed) and jumps straight into the capture
-    /// field so the dedicated hotkey goes from idea to typed text with
-    /// no intermediate click.
-    func showQuickCapture() {
-        if !isVisible { show() }
-        appState.requestCapture()
-    }
-
     // Appear/disappear as a plain fade, no slide. Movement catches the eye
     // far more than a fade does, and this panel is meant to be glanceable,
     // not performative, every time it opens.
-    func show() {
+    /// `takeFocus: false` is for `--snapshot`: it must not take the keyboard or mouse from the user.
+    func show(takeFocus: Bool = true) {
+        leftPanel.ignoresMouseEvents = !takeFocus
+        rightPanel.ignoresMouseEvents = !takeFocus
         let (finalLeft, finalRight) = Self.targetFrames()
         leftPanel.setFrame(finalLeft, display: false)
         rightPanel.setFrame(finalRight, display: false)
@@ -82,8 +79,12 @@ final class PanelController {
 
         rightPanel.orderFrontRegardless()
         leftPanel.orderFrontRegardless()
-        leftPanel.makeKey()
         isVisible = true
+        if takeFocus {
+            leftPanel.makeKey()
+            // No list to focus yet, so go straight to the capture field.
+            if threadStore.threads.isEmpty { appState.requestCapture() }
+        }
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
@@ -104,6 +105,16 @@ final class PanelController {
             self?.leftPanel.orderOut(nil)
             self?.rightPanel.orderOut(nil)
         })
+    }
+
+    func snapshot(to dir: URL) {
+        for (name, panel) in [("left", leftPanel), ("right", rightPanel)] {
+            guard let view = panel.contentView,
+                  let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?
+                .write(to: dir.appendingPathComponent("\(name).png"))
+        }
     }
 
     /// The panels' resting frames on whichever screen the pointer is on, so

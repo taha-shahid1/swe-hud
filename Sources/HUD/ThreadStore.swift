@@ -16,16 +16,37 @@ final class ThreadStore {
         load()
     }
 
-    /// Sorted by what needs you, not recency: needs-you first, then
-    /// working, then waiting-on-someone, then done. Within a status,
-    /// the longest-untouched thread surfaces first so nothing gets buried.
+    /// Grouped by what needs you: needs-you, working, waiting, done. Within
+    /// a group, `threads` array order is the user's manual arrangement.
     var sorted: [ThreadItem] {
-        threads.sorted { a, b in
-            if a.status.sortPriority != b.status.sortPriority {
-                return a.status.sortPriority < b.status.sortPriority
+        threads.enumerated().sorted { a, b in
+            if a.element.status.sortPriority != b.element.status.sortPriority {
+                return a.element.status.sortPriority < b.element.status.sortPriority
             }
-            return a.updatedAt < b.updatedAt
+            return a.offset < b.offset
         }
+        .map(\.element)
+    }
+
+    /// Moves a thread onto another's slot in the same status group: below it
+    /// when moving down, above it when moving up.
+    func move(_ id: UUID, to targetID: UUID) {
+        guard id != targetID,
+              let from = threads.firstIndex(where: { $0.id == id }),
+              let to = threads.firstIndex(where: { $0.id == targetID }),
+              threads[from].status == threads[to].status
+        else { return }
+        threads.insert(threads.remove(at: from), at: to)
+        save()
+    }
+
+    /// Swaps with the visible neighbor; stops at the edge of the status group.
+    func move(_ id: UUID, by delta: Int) {
+        let items = sorted
+        guard let idx = items.firstIndex(where: { $0.id == id }),
+              items.indices.contains(idx + delta)
+        else { return }
+        move(id, to: items[idx + delta].id)
     }
 
     @discardableResult
@@ -48,6 +69,11 @@ final class ThreadStore {
         guard let idx = threads.firstIndex(where: { $0.id == id }) else { return }
         threads[idx].status = status
         threads[idx].updatedAt = Date()
+        save()
+    }
+
+    func remove(_ id: UUID) {
+        threads.removeAll { $0.id == id }
         save()
     }
 

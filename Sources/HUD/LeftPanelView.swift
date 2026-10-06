@@ -5,6 +5,23 @@ struct LeftPanelView: View {
     let appState: HUDAppState
 
     @FocusState private var listFocused: Bool
+    @State private var listHeight: CGFloat = 0
+    /// Mouse reordering. A plain DragGesture, not system drag-and-drop: that
+    /// needs a pasteboard type macOS only registers for bundled apps.
+    @State private var draggingID: UUID?
+    @State private var dragOffset: CGFloat = 0
+    @State private var dropTargetID: UUID?
+    @State private var rowFrames: [UUID: CGRect] = [:]
+    /// Drag auto-scroll: the pointer is tracked in the (non-scrolling) viewport,
+    /// so the dragged row can be kept under it while content scrolls beneath.
+    @State private var scrollPosition = ScrollPosition(edge: .top)
+    @State private var scroll = ScrollMetrics()
+    @State private var dragStartOffset: CGFloat = 0
+    @State private var dragTranslation: CGFloat = 0
+    @State private var pointerY: CGFloat = 0
+    @State private var autoScrollTimer: Timer?
+    /// Panel max height minus header, capture field and padding.
+    private static let maxListHeight = PanelController.maxHeight - 120
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -23,7 +40,7 @@ struct LeftPanelView: View {
                     emptyState
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: Theme.Spacing.xs + 2) {
+                        VStack(spacing: Theme.Spacing.xs + 2) {
                             ForEach(store.sorted) { thread in
                                 ThreadRowView(
                                     thread: thread,
@@ -37,14 +54,46 @@ struct LeftPanelView: View {
                                     }
                                 )
                                 .transition(.scale(scale: 0.96).combined(with: .opacity))
+                                .onGeometryChange(for: CGRect.self) {
+                                    $0.frame(in: .named(Self.listSpace))
+                                } action: { rowFrames[thread.id] = $0 }
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
+                                        .strokeBorder(Color.primary.opacity(dropTargetID == thread.id ? 0.3 : 0), lineWidth: 1.5)
+                                )
+                                .scaleEffect(draggingID == thread.id ? 1.02 : 1)
+                                .shadow(color: .black.opacity(draggingID == thread.id ? 0.18 : 0), radius: 8, y: 3)
+                                .offset(y: draggingID == thread.id ? dragOffset : 0)
+                                .zIndex(draggingID == thread.id ? 1 : 0)
                                 .onTapGesture {
                                     appState.selectedID = thread.id
                                     listFocused = true
                                 }
+                                .gesture(reorderGesture(for: thread))
                             }
                         }
+                        .coordinateSpace(name: Self.listSpace)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
                     }
-                    .scrollIndicators(.hidden)
+                    // Exactly as tall as the rows (capped), so the panel hugs
+                    // its content: NSHostingView resizes the window to match.
+                    // Must be exact, not maxHeight — a flexible height lets
+                    // the window shrink but never grow back.
+                    .frame(height: min(listHeight, Self.maxListHeight))
+                    .coordinateSpace(name: Self.viewportSpace)
+                    .scrollPosition($scrollPosition)
+                    .onScrollGeometryChange(for: ScrollMetrics.self) { geo in
+                        ScrollMetrics(
+                            offset: geo.contentOffset.y,
+                            maxOffset: max(0, geo.contentSize.height - geo.containerSize.height),
+                            height: geo.containerSize.height
+                        )
+                    } action: { _, new in
+                        scroll = new
+                        if draggingID != nil { updateDrag() }
+                    }
+                    .onDisappear { stopAutoScroll() }
+                    .scrollIndicators(.never)
                     // Rows fade out at the scroll edges instead of clipping
                     // hard mid-row — the reactbits AnimatedList top-gradient
                     // trick, done as a true content mask.
@@ -75,15 +124,11 @@ struct LeftPanelView: View {
                         }
                         listFocused = true
                     }
-                    .onKeyPress(.upArrow) {
-                        guard appState.editingID == nil else { return .ignored }
-                        moveSelection(by: -1)
-                        return .handled
+                    .onKeyPress(.upArrow, phases: [.down, .repeat]) { press in
+                        arrow(press, delta: -1)
                     }
-                    .onKeyPress(.downArrow) {
-                        guard appState.editingID == nil else { return .ignored }
-                        moveSelection(by: 1)
-                        return .handled
+                    .onKeyPress(.downArrow, phases: [.down, .repeat]) { press in
+                        arrow(press, delta: 1)
                     }
                     .onKeyPress(.return) {
                         guard appState.editingID == nil, let id = appState.selectedID else {
@@ -102,10 +147,29 @@ struct LeftPanelView: View {
                         }
                         return .handled
                     }
+                    .onKeyPress("n") {
+                        guard appState.editingID == nil else { return .ignored }
+                        appState.requestCapture()
+                        return .handled
+                    }
+                    .onKeyPress(.delete) {
+                        guard appState.editingID == nil, let id = appState.selectedID else {
+                            return .ignored
+                        }
+                        // Select the neighbor first so focus doesn't fall off the list.
+                        let items = store.sorted
+                        if let idx = items.firstIndex(where: { $0.id == id }) {
+                            let neighbor = items.indices.contains(idx + 1) ? items[idx + 1] : (idx > 0 ? items[idx - 1] : nil)
+                            appState.selectedID = neighbor?.id
+                        }
+                        withAnimation(Theme.listSpring) {
+                            store.remove(id)
+                        }
+                        return .handled
+                    }
                 }
         }
-        .padding(.horizontal, Theme.Spacing.lg)
-        .padding(.top, Theme.Spacing.lg)
+        .padding(Theme.Spacing.lg)
         .frame(width: PanelController.leftPanelWidth)
         .glassBackdrop()
         .ignoresSafeArea()
@@ -130,6 +194,94 @@ struct LeftPanelView: View {
         }
     }
 
+    private static let listSpace = "threadList"
+    private static let viewportSpace = "threadViewport"
+    /// Pointer within this distance of the list's top/bottom edge scrolls it.
+    private static let edgeZone: CGFloat = 32
+    /// Points per frame at full speed (pointer at or past the edge).
+    private static let maxScrollStep: CGFloat = 10
+
+    /// Drag a row; on release it takes the slot of the row under the pointer
+    /// (same status group only, like ⌥↑/⌥↓).
+    private func reorderGesture(for thread: ThreadItem) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named(Self.viewportSpace))
+            .onChanged { value in
+                if draggingID == nil {
+                    draggingID = thread.id
+                    appState.selectedID = thread.id
+                    listFocused = true
+                    dragStartOffset = scroll.offset
+                    startAutoScroll()
+                }
+                dragTranslation = value.translation.height
+                pointerY = value.location.y
+                updateDrag()
+            }
+            .onEnded { _ in
+                stopAutoScroll()
+                let targetID = target(at: pointerY + scroll.offset, for: thread)
+                withAnimation(Theme.listSpring) {
+                    if let targetID { store.move(thread.id, to: targetID) }
+                    draggingID = nil
+                    dragOffset = 0
+                }
+                dropTargetID = nil
+            }
+    }
+
+    private func updateDrag() {
+        guard let id = draggingID, let thread = store.threads.first(where: { $0.id == id }) else { return }
+        // Pointer motion plus however far the content has scrolled since the drag began.
+        dragOffset = dragTranslation + (scroll.offset - dragStartOffset)
+        dropTargetID = target(at: pointerY + scroll.offset, for: thread)
+    }
+
+    private func startAutoScroll() {
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in autoScrollStep() }
+        // .common so it keeps firing while the mouse is held down.
+        RunLoop.main.add(timer, forMode: .common)
+        autoScrollTimer = timer
+    }
+
+    private func stopAutoScroll() {
+        autoScrollTimer?.invalidate()
+        autoScrollTimer = nil
+    }
+
+    /// Faster the deeper the pointer is in the edge zone; capped once past the edge.
+    private func autoScrollStep() {
+        let depth: CGFloat
+        if pointerY < Self.edgeZone {
+            depth = pointerY - Self.edgeZone
+        } else if pointerY > scroll.height - Self.edgeZone {
+            depth = pointerY - (scroll.height - Self.edgeZone)
+        } else {
+            return
+        }
+        let step = max(-1, min(1, depth / Self.edgeZone)) * Self.maxScrollStep
+        let next = min(max(scroll.offset + step, 0), scroll.maxOffset)
+        if next != scroll.offset { scrollPosition.scrollTo(y: next) }
+    }
+
+    private func target(at y: CGFloat, for thread: ThreadItem) -> UUID? {
+        store.sorted.first { other in
+            other.id != thread.id && other.status == thread.status
+                && (rowFrames[other.id].map { $0.minY...$0.maxY ~= y } ?? false)
+        }?.id
+    }
+
+    /// ↑/↓ moves the selection; ⌥↑/⌥↓ moves the selected thread itself.
+    private func arrow(_ press: KeyPress, delta: Int) -> KeyPress.Result {
+        guard appState.editingID == nil else { return .ignored }
+        if press.modifiers.contains(.option) {
+            guard let id = appState.selectedID else { return .ignored }
+            withAnimation(Theme.listSpring) { store.move(id, by: delta) }
+        } else {
+            moveSelection(by: delta)
+        }
+        return .handled
+    }
+
     private func moveSelection(by delta: Int) {
         let items = store.sorted
         guard !items.isEmpty else { return }
@@ -151,12 +303,12 @@ struct LeftPanelView: View {
             Text("Nothing in flight")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
-            Text("⌥N to capture a thread")
+            Text("Type above to capture a thread")
                 .font(.system(size: 12))
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, Theme.Spacing.xl * 2)
+        .padding(.vertical, Theme.Spacing.xl)
     }
 
     /// "ENG-482 fix the thing" -> key "ENG-482", title "fix the thing".
@@ -169,4 +321,10 @@ struct LeftPanelView: View {
         }
         return ("", text)
     }
+}
+
+private struct ScrollMetrics: Equatable {
+    var offset: CGFloat = 0
+    var maxOffset: CGFloat = 0
+    var height: CGFloat = 0
 }

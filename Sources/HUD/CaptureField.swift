@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The always-visible quick-capture bar at the top of the left panel.
-/// The quick-capture hotkey opens the panel (if needed) and focuses this
-/// field directly, so typing + Enter creates a thread with no clicking.
+/// N on the thread list (or opening the panel with no threads) focuses
+/// this field, so typing + Enter creates a thread with no clicking.
 struct CaptureField: View {
     let appState: HUDAppState
     var onCommit: (String) -> Void
@@ -16,7 +16,7 @@ struct CaptureField: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(focused ? Theme.accent : Color.secondary)
 
-            TextField("Capture a thread — ⌥N", text: $text)
+            TextField("Capture a thread — N", text: $text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
         }

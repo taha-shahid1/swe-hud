@@ -26,17 +26,18 @@ enum SessionState: String, Codable, CaseIterable {
     }
 }
 
-/// One Claude Code session. Populated by Claude Code hooks writing to the
-/// shared store (not yet wired — see SessionStore). `id` is the Claude
-/// session ID itself, not a locally-generated UUID: hooks upsert one
-/// record per session by that ID.
+/// One Claude Code session: `claude agents --json` merged with the hook
+/// overlay (see SessionStore). `id` is the Claude session ID itself, not a
+/// locally-generated UUID.
 struct SessionItem: Identifiable, Codable, Equatable {
     var id: String
+    /// Claude's session name (auto `<project>-<hex>`, or set via /rename) —
+    /// unique, unlike project, when several sessions share a repo.
+    var name: String?
     var cwd: String
     var branch: String?
     var state: SessionState
-    /// Distilled by a headless `claude -p` pass over the transcript: what
-    /// happened, what's blocked on me, next step. Facts only, no guessing.
+    /// Claude Code's latest `/recap` for the session, from its transcript.
     var note: String?
     var notedAt: Date?
     /// For jumping to the right terminal window/tab later.

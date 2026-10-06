@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Observation
 
 /// `claude agents --json` is Claude Code's own authoritative live list of
@@ -7,10 +7,10 @@ import Observation
 /// sidesteps a whole category of bugs: ghost entries from internal
 /// utility processes, duplicate/raced upserts, and stale-timeout logic
 /// (a session that crashed just isn't in the list anymore — nothing to
-/// time out). The hook script (`~/.claude/hud-session-hook.sh`) now only
-/// writes the two things polling can't provide: the "needs you" flag and
-/// the distilled note, into a small overlay file keyed by session ID,
-/// which this store merges in and watches for changes (no polling there).
+/// time out). Notes are Claude Code's own `/recap` text, read from each
+/// transcript. The hook script (`scripts/hud-session-hook.sh`) writes the
+/// one thing neither provides, the "needs you" flag, into an overlay file
+/// this store watches.
 @Observable
 final class SessionStore {
     private(set) var sessions: [SessionItem] = []
@@ -19,6 +19,10 @@ final class SessionStore {
     private var overlayWatcher: FileWatcher?
     private var pollTimer: Timer?
     private var branchCache: [String: String] = [:]
+    private var transcriptCache: [String: URL] = [:]
+    private let recaps = RecapReader()
+    /// Serial, so overlapping refreshes (timer + file watcher) can't race on the caches.
+    private let refreshQueue = DispatchQueue(label: "SessionStore.refresh", qos: .utility)
 
     private static let pollInterval: TimeInterval = 5
 
@@ -54,32 +58,47 @@ final class SessionStore {
     }
 
     private func refresh() {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        refreshQueue.async { [weak self] in
             guard let self else { return }
             let agents = Self.fetchAgents()
             let overlay = Self.loadOverlay(self.overlayFileURL)
             let merged = agents
                 .filter { $0.kind == "interactive" }
-                .map { self.buildItem(from: $0, overlay: overlay[$0.sessionId]) }
+                .compactMap { agent in agent.pid.map { self.buildItem(from: agent, pid: $0, overlay: overlay[agent.sessionId]) } }
             DispatchQueue.main.async {
                 self.sessions = merged
             }
         }
     }
 
-    private func buildItem(from agent: AgentEntry, overlay: OverlayEntry?) -> SessionItem {
+    private func buildItem(from agent: AgentEntry, pid: Int, overlay: OverlayEntry?) -> SessionItem {
         let needsYou = overlay?.needsYou ?? false
+        let recap = transcript(for: agent.sessionId).flatMap { recaps.recap(in: $0) }
         return SessionItem(
             id: agent.sessionId,
+            name: agent.name,
             cwd: agent.cwd,
             branch: branch(for: agent.cwd),
             state: needsYou ? .needsYou : (agent.status == "busy" ? .working : .idle),
-            note: overlay?.note,
-            notedAt: overlay?.notedAt,
-            tty: Self.tty(forPID: agent.pid),
-            pid: Int32(agent.pid),
+            note: recap?.text,
+            notedAt: recap?.at,
+            tty: Self.tty(forPID: pid),
+            pid: Int32(pid),
             updatedAt: Date()
         )
+    }
+
+    /// `~/.claude/projects/<encoded cwd>/<session id>.jsonl`. Found by scanning,
+    /// not by re-deriving Claude's cwd encoding.
+    private func transcript(for sessionID: String) -> URL? {
+        if let cached = transcriptCache[sessionID] { return cached }
+        let projects = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/projects")
+        let dirs = (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
+        let found = dirs
+            .map { $0.appendingPathComponent("\(sessionID).jsonl") }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+        if let found { transcriptCache[sessionID] = found }
+        return found
     }
 
     private func branch(for cwd: String) -> String? {
@@ -91,23 +110,20 @@ final class SessionStore {
 
     // MARK: - Shelling out
 
-    private static let claudeFallbackPaths = [
-        "\(NSHomeDirectory())/.local/bin/claude",
-        "/opt/homebrew/bin/claude",
-        "/usr/local/bin/claude",
+    private static let fallbackDirs = [
+        "\(NSHomeDirectory())/.local/bin",
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
     ]
 
     /// A GUI app launched outside a shell gets a minimal PATH (no
     /// `.zshrc`), so a bare lookup can miss an install that works fine in
     /// Terminal. Check PATH first, then a few common install locations.
-    private static func resolveClaudeBinary() -> String? {
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
-            for dir in path.split(separator: ":") {
-                let candidate = "\(dir)/claude"
-                if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-            }
-        }
-        return claudeFallbackPaths.first { FileManager.default.isExecutableFile(atPath: $0) }
+    private static func resolveBinary(_ name: String) -> String? {
+        let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        return (pathDirs + fallbackDirs)
+            .map { "\($0)/\(name)" }
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     private static func run(_ executable: String, _ arguments: [String]) -> Data {
@@ -127,7 +143,7 @@ final class SessionStore {
     }
 
     private static func fetchAgents() -> [AgentEntry] {
-        guard let bin = resolveClaudeBinary() else { return [] }
+        guard let bin = resolveBinary("claude") else { return [] }
         let data = run(bin, ["agents", "--json"])
         return (try? JSONDecoder().decode([AgentEntry].self, from: data)) ?? []
     }
@@ -145,6 +161,85 @@ final class SessionStore {
         return "/dev/\(value)"
     }
 
+    // MARK: - Jumping to a session
+
+    /// Brings the session's terminal to the front. In tmux: switch the most
+    /// recently active client to the session's pane, then raise that client.
+    func jump(to session: SessionItem) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            var hostTTY = session.tty
+            var hostPID = session.pid.map(Int.init)
+            if let tty = session.tty, let tmux = Self.resolveBinary("tmux"),
+               let pane = Self.fields(Self.run(tmux, ["list-panes", "-a", "-F", "#{pane_tty} #{pane_id}"]))
+                   .first(where: { $0.first == tty })?.last,
+               let client = Self.fields(Self.run(tmux, ["list-clients", "-F", "#{client_activity} #{client_tty} #{client_pid}"]))
+                   .filter({ $0.count == 3 })
+                   .max(by: { (Int($0[0]) ?? 0) < (Int($1[0]) ?? 0) })
+            {
+                // Explicit -c: run from outside tmux there's no "current client".
+                _ = Self.run(tmux, ["switch-client", "-c", client[1], "-t", pane])
+                _ = Self.run(tmux, ["select-window", "-t", pane])
+                _ = Self.run(tmux, ["select-pane", "-t", pane])
+                hostTTY = client[1]
+                hostPID = Int(client[2])
+            }
+            guard let hostPID, let app = Self.hostingApp(of: hostPID) else { return }
+            DispatchQueue.main.async { Self.bringForward(app, tty: hostTTY) }
+        }
+    }
+
+    /// Terminal.app: raise the exact window/tab by tty (Automation permission,
+    /// asked once). Then activate through LaunchServices — a background app's
+    /// plain `activate()` request is ignored under macOS 14 cooperative activation.
+    private static func bringForward(_ app: NSRunningApplication, tty: String?) {
+        if app.bundleIdentifier == "com.apple.Terminal",
+           let tty, tty.range(of: #"^/dev/ttys\d+$"#, options: .regularExpression) != nil
+        {
+            let script = """
+            tell application "Terminal"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if tty of t is "\(tty)" then
+                            set selected of t to true
+                            set index of w to 1
+                        end if
+                    end repeat
+                end repeat
+            end tell
+            """
+            NSAppleScript(source: script)?.executeAndReturnError(nil)
+        }
+        guard let url = app.bundleURL else { return }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config)
+    }
+
+    /// Nearest ancestor (or self) that's a GUI app: Terminal, iTerm, Ghostty, VS Code...
+    private static func hostingApp(of pid: Int) -> NSRunningApplication? {
+        var parent: [Int: Int] = [:]
+        for line in lines(run("/bin/ps", ["-axo", "pid=,ppid="])) {
+            let parts = line.split(separator: " ").compactMap { Int($0) }
+            if parts.count == 2 { parent[parts[0]] = parts[1] }
+        }
+        var current: Int? = pid
+        while let p = current, p > 1 {
+            if let app = NSRunningApplication(processIdentifier: pid_t(p)) { return app }
+            current = parent[p]
+        }
+        return nil
+    }
+
+    private static func lines(_ data: Data) -> [String] {
+        (String(data: data, encoding: .utf8) ?? "")
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private static func fields(_ data: Data) -> [[String]] {
+        lines(data).map { $0.split(separator: " ").map(String.init) }
+    }
+
     private static func loadOverlay(_ url: URL) -> [String: OverlayEntry] {
         guard let data = try? Data(contentsOf: url) else { return [:] }
         let decoder = JSONDecoder()
@@ -153,16 +248,17 @@ final class SessionStore {
     }
 }
 
+/// Optional fields: background agents carry no `pid`/`status`, and one
+/// non-optional miss would fail decoding of the whole array.
 private struct AgentEntry: Decodable {
-    let pid: Int
+    let pid: Int?
     let cwd: String
     let kind: String
     let sessionId: String
-    let status: String
+    let name: String?
+    let status: String?
 }
 
 private struct OverlayEntry: Decodable {
     let needsYou: Bool?
-    let note: String?
-    let notedAt: Date?
 }

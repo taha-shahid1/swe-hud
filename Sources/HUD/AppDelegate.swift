@@ -6,7 +6,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var panelController: PanelController!
     private var toggleHotKey: HotKeyManager?
-    private var captureHotKey: HotKeyManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -15,6 +14,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setUpStatusItem()
         setUpHotKeys()
         registerLoginItemIfNeeded()
+        // Dev affordance: `HUD --show` opens the panels at launch, for
+        // eyeballing UI changes without the hotkey. `--snapshot <dir>` also
+        // renders them to PNGs (no Screen Recording permission needed).
+        let args = CommandLine.arguments
+        if args.contains("--show") { panelController.show() }
+        if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
+            panelController.show(takeFocus: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.panelController.snapshot(to: URL(fileURLWithPath: args[i + 1]))
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     private func setUpStatusItem() {
@@ -25,9 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         let toggleItem = NSMenuItem(
-            title: "Toggle HUD", action: #selector(togglePanels), keyEquivalent: "h"
+            title: "Toggle HUD", action: #selector(togglePanels), keyEquivalent: "\t"
         )
-        toggleItem.keyEquivalentModifierMask = [.control, .option]
+        toggleItem.keyEquivalentModifierMask = [.option]
         toggleItem.target = self
         menu.addItem(toggleItem)
 
@@ -41,20 +52,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setUpHotKeys() {
-        // Not ⌥Space: Raycast (and many launchers) already own that combo,
-        // and Carbon hotkeys are first-come-first-served system-wide.
+        // ⌥Tab: unbound by macOS and common apps. Avoids ⌥Space (Claude
+        // desktop, launchers), ⌘⇧Space (1Password), ⌥-letters (dead keys
+        // like ⌥N for ñ) and ⌃-letters (tmux/shell). Carbon hotkeys steal
+        // the combo from every app, so it has to be one nothing uses.
+        // Capture is N inside the panel, not a second global hotkey.
         toggleHotKey = HotKeyManager(
-            keyCode: UInt32(kVK_ANSI_H),
-            modifiers: UInt32(controlKey | optionKey)
-        ) { [weak self] in
-            self?.panelController.toggle()
-        }
-
-        captureHotKey = HotKeyManager(
-            keyCode: UInt32(kVK_ANSI_N),
+            keyCode: UInt32(kVK_Tab),
             modifiers: UInt32(optionKey)
         ) { [weak self] in
-            self?.panelController.showQuickCapture()
+            self?.panelController.toggle()
         }
     }
 

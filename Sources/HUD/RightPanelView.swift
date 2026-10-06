@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RightPanelView: View {
     let store: SessionStore
+    var onJumped: () -> Void
 
     private var sessionCount: Int {
         store.sorted.count
@@ -26,7 +27,7 @@ struct RightPanelView: View {
                 }
             }
 
-            SessionsView(store: store)
+            SessionsView(store: store, onJumped: onJumped)
         }
         .padding(.horizontal, Theme.Spacing.lg)
         .padding(.top, Theme.Spacing.lg)
