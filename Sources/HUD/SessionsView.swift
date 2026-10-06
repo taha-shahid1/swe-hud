@@ -107,6 +107,12 @@ struct SessionsView: View {
                         selectedID = session.id
                         gridFocused = true
                     }
+                    // Simultaneous, so the single click above still selects without
+                    // waiting out the double-click interval.
+                    .simultaneousGesture(TapGesture(count: 2).onEnded {
+                        selectedID = session.id
+                        jumpToSelected()
+                    })
             }
         }
     }
