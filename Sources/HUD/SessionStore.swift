@@ -60,6 +60,15 @@ final class SessionStore {
     private func refresh() {
         refreshQueue.async { [weak self] in
             guard let self else { return }
+            // Dev affordance: render canned sessions (with --snapshot) without
+            // touching live sessions or tmux.
+            if let path = ProcessInfo.processInfo.environment["HUD_FAKE_SESSIONS"],
+               let data = FileManager.default.contents(atPath: path),
+               let fake = try? JSONDecoder().decode([SessionItem].self, from: data)
+            {
+                DispatchQueue.main.async { self.sessions = fake }
+                return
+            }
             let agents = Self.fetchAgents()
             let overlay = Self.loadOverlay(self.overlayFileURL)
             let panes = Self.tmuxPaneAttachment()

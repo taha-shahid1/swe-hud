@@ -22,48 +22,43 @@ struct SessionsView: View {
             if store.sorted.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                        let (live, detached) = sections
-                        if !live.isEmpty {
-                            sectionHeader("Attached", icon: "eye")
-                            grid(live)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            let (live, detached) = sections
+                            if !live.isEmpty {
+                                sectionHeader("Attached", icon: "eye")
+                                grid(live)
+                            }
+                            if !detached.isEmpty {
+                                sectionHeader("Detached", icon: "eye.slash")
+                                    .padding(.top, live.isEmpty ? 0 : Theme.Spacing.xs)
+                                grid(detached)
+                            }
                         }
-                        if !detached.isEmpty {
-                            sectionHeader("Detached", icon: "eye.slash")
-                                .padding(.top, live.isEmpty ? 0 : Theme.Spacing.xs)
-                            grid(detached)
-                        }
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { gridHeight = $0 }
                     }
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { gridHeight = $0 }
+                    // Keyboard selection off-screen: scroll just enough to show it.
+                    .onChange(of: selectedID) { _, id in
+                        if let id { withAnimation(Theme.listSpring) { proxy.scrollTo(id) } }
+                    }
+                    // Exact + capped, same as the thread list (see LeftPanelView).
+                    .frame(height: min(gridHeight, Self.maxGridHeight))
+                    .scrollIndicators(.never)
+                    .scrollEdgeFade()
+                    .focusable()
+                    .focusEffectDisabled()
+                    .focused($gridFocused)
+                    .onAppear {
+                        if selectedID == nil { selectedID = store.sorted.first?.id }
+                        gridFocused = true
+                    }
+                    .onKeyPress(.leftArrow) { move(.left); return .handled }
+                    .onKeyPress(.rightArrow) { move(.right); return .handled }
+                    .onKeyPress(.upArrow) { move(.up); return .handled }
+                    .onKeyPress(.downArrow) { move(.down); return .handled }
+                    .onKeyPress(.return) { jumpToSelected(); return .handled }
                 }
-                // Exact + capped, same as the thread list (see LeftPanelView).
-                .frame(height: min(gridHeight, Self.maxGridHeight))
-                .scrollIndicators(.never)
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.03),
-                            .init(color: .black, location: 0.96),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .focusable()
-                .focusEffectDisabled()
-                .focused($gridFocused)
-                .onAppear {
-                    if selectedID == nil { selectedID = store.sorted.first?.id }
-                    gridFocused = true
-                }
-                .onKeyPress(.leftArrow) { move(.left); return .handled }
-                .onKeyPress(.rightArrow) { move(.right); return .handled }
-                .onKeyPress(.upArrow) { move(.up); return .handled }
-                .onKeyPress(.downArrow) { move(.down); return .handled }
-                .onKeyPress(.return) { jumpToSelected(); return .handled }
 
                 if let selected = store.sorted.first(where: { $0.id == selectedID }) {
                     DetailStrip(session: selected, onJump: jumpToSelected)

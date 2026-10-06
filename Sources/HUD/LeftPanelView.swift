@@ -95,21 +95,7 @@ struct LeftPanelView: View {
                     }
                     .onDisappear { stopAutoScroll() }
                     .scrollIndicators(.never)
-                    // Rows fade out at the scroll edges instead of clipping
-                    // hard mid-row — the reactbits AnimatedList top-gradient
-                    // trick, done as a true content mask.
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0),
-                                .init(color: .black, location: 0.025),
-                                .init(color: .black, location: 0.96),
-                                .init(color: .clear, location: 1),
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                    .scrollEdgeFade()
                     // A plain ScrollView instead of List: List's native
                     // NSTableView selection paints a system-blue highlight
                     // that no SwiftUI modifier can suppress, which clashed
