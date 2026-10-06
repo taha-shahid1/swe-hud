@@ -230,15 +230,40 @@ final class SessionStore {
         NSWorkspace.shared.openApplication(at: url, configuration: config)
     }
 
-    /// New Terminal window running `tmux attach` on the pane (attach -t %id also
-    /// makes that pane current). Same Automation permission as bringForward.
+    /// Runs `tmux attach` on the pane (attach -t %id also makes it current) in a new
+    /// tab of Terminal's front window, or a new window if Terminal has none.
+    /// Terminal can't script "new tab", so the tab comes from ⌘T via System Events
+    /// (needs Accessibility). The command only goes into that tab once Terminal is
+    /// frontmost and the tab count rose; otherwise it would land in a busy tab.
     private static func openTerminalAttached(tmux: String, pane: String) {
         guard pane.range(of: #"^%\d+$"#, options: .regularExpression) != nil,
               !tmux.contains("\""), !tmux.contains("\\")
         else { return }
+        let command = "'\(tmux)' attach -t \(pane)"
         let script = """
         tell application "Terminal"
-            do script "'\(tmux)' attach -t \(pane)"
+            if (count of windows) is 0 then
+                do script "\(command)"
+            else
+                activate
+                delay 0.2
+                set tabCount to count of tabs of front window
+                set opened to false
+                try
+                    tell application "System Events"
+                        if frontmost of process "Terminal" then
+                            keystroke "t" using command down
+                            set opened to true
+                        end if
+                    end tell
+                end try
+                if opened then delay 0.3
+                if opened and (count of tabs of front window) > tabCount then
+                    do script "\(command)" in front window
+                else
+                    do script "\(command)"
+                end if
+            end if
             activate
         end tell
         """
