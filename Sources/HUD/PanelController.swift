@@ -19,7 +19,7 @@ final class PanelController {
     private let leftPanel: HUDPanel
     private let rightPanel: HUDPanel
     private let threadStore = ThreadStore()
-    private let sessionStore = SessionStore()
+    let sessionStore = SessionStore()
     private let appState = HUDAppState()
     private(set) var isVisible = false
     private var keyMonitor: Any?
@@ -42,6 +42,13 @@ final class PanelController {
             guard let self, !self.sessionStore.sorted.isEmpty else { return }
             self.rightPanel.makeKey()
             self.appState.sessionsFocusTrigger += 1
+        }
+        appState.jumpToSessionAt = { [weak self] index in
+            guard let self else { return }
+            let sessions = self.sessionStore.sorted
+            guard sessions.indices.contains(index) else { return }
+            self.sessionStore.jump(to: sessions[index])
+            self.hide()
         }
         appState.focusThreads = { [weak self] in
             guard let self else { return }

@@ -15,9 +15,18 @@ final class HUDAppState {
     /// focus across means making the other window key first.
     @ObservationIgnored var focusThreads: () -> Void = {}
     @ObservationIgnored var focusSessions: () -> Void = {}
+    /// Jump to the session tile at this index (display order). Set by PanelController.
+    @ObservationIgnored var jumpToSessionAt: (Int) -> Void = { _ in }
 
     func requestCapture() {
         captureFocusTrigger += 1
+    }
+
+    /// "1"–"9" in either panel jumps to that numbered tile. False if `key` isn't one.
+    func jumpToSession(numbered key: String) -> Bool {
+        guard let n = Int(key), (1...9).contains(n) else { return false }
+        jumpToSessionAt(n - 1)
+        return true
     }
 
     /// Returns true if it consumed the escape (i.e. was mid-edit).

@@ -28,12 +28,12 @@ struct SessionsView: View {
                             let (live, detached) = sections
                             if !live.isEmpty {
                                 sectionHeader("Attached", icon: "eye")
-                                grid(live)
+                                grid(live, offset: 0)
                             }
                             if !detached.isEmpty {
                                 sectionHeader("Detached", icon: "eye.slash")
                                     .padding(.top, live.isEmpty ? 0 : Theme.Spacing.xs)
-                                grid(detached)
+                                grid(detached, offset: live.count)
                             }
                         }
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { gridHeight = $0 }
@@ -58,6 +58,9 @@ struct SessionsView: View {
                     .onKeyPress(.upArrow) { move(.up); return .handled }
                     .onKeyPress(.downArrow) { move(.down); return .handled }
                     .onKeyPress(.return) { jumpToSelected(); return .handled }
+                    .onKeyPress(characters: .decimalDigits) { press in
+                        appState.jumpToSession(numbered: press.characters) ? .handled : .ignored
+                    }
                 }
 
                 if let selected = store.sorted.first(where: { $0.id == selectedID }) {
@@ -99,10 +102,14 @@ struct SessionsView: View {
         .foregroundStyle(.tertiary)
     }
 
-    private func grid(_ items: [SessionItem]) -> some View {
+    /// `offset`: tiles before this section, so numbers run on across both.
+    private func grid(_ items: [SessionItem], offset: Int) -> some View {
         LazyVGrid(columns: columns, spacing: Theme.Spacing.sm) {
-            ForEach(items) { session in
-                SessionTileView(session: session, isSelected: selectedID == session.id, isActive: gridFocused)
+            ForEach(Array(items.enumerated()), id: \.element.id) { i, session in
+                SessionTileView(
+                    session: session, isSelected: selectedID == session.id,
+                    number: offset + i < 9 ? offset + i + 1 : nil, isActive: gridFocused
+                )
                     .onTapGesture {
                         selectedID = session.id
                         gridFocused = true
@@ -210,7 +217,7 @@ private struct DetailStrip: View {
                 HStack(spacing: 3) {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 9, weight: .semibold))
-                    Text(session.state == .detached ? "open in Terminal" : "jump in")
+                    Text(session.state == .detached || session.attachID != nil ? "open in Terminal" : "jump in")
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(Theme.accent)

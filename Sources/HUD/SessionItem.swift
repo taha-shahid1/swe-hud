@@ -44,6 +44,8 @@ struct SessionItem: Identifiable, Codable, Equatable {
     /// For jumping to the right terminal window/tab later.
     var tty: String?
     var pid: Int32?
+    /// Background agents only: the id `claude attach` takes to open it in a terminal.
+    var attachID: String?
     var updatedAt: Date = Date()
 
     var project: String {

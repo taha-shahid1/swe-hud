@@ -149,6 +149,10 @@ struct LeftPanelView: View {
                         appState.requestCapture()
                         return .handled
                     }
+                    .onKeyPress(characters: .decimalDigits) { press in
+                        guard appState.editingID == nil else { return .ignored }
+                        return appState.jumpToSession(numbered: press.characters) ? .handled : .ignored
+                    }
                     .onKeyPress(.delete) {
                         guard appState.editingID == nil, let id = appState.selectedID else {
                             return .ignored

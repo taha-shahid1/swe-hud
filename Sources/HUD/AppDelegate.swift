@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import ServiceManagement
+import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
@@ -12,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         panelController = PanelController()
         setUpStatusItem()
+        trackNeedsYou()
         setUpHotKeys()
         registerLoginItemIfNeeded()
         // Dev affordance: `HUD --show` opens the panels at launch, for
@@ -29,10 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setUpStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(
             systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "HUD"
         )
+        statusItem.button?.imagePosition = .imageLeading
 
         let menu = NSMenu()
         let toggleItem = NSMenuItem(
@@ -49,6 +52,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+    }
+
+    /// Accent count in the menu bar while any session needs you, so a blocked
+    /// session gets noticed without opening the HUD.
+    private func trackNeedsYou() {
+        let count = withObservationTracking {
+            panelController.sessionStore.sessions.filter { $0.state == .needsYou }.count
+        } onChange: { [weak self] in
+            DispatchQueue.main.async { self?.trackNeedsYou() }
+        }
+        statusItem.button?.title = count > 0 ? "\(count)" : ""
+        statusItem.button?.contentTintColor = count > 0 ? NSColor(Theme.accent) : nil
     }
 
     private func setUpHotKeys() {

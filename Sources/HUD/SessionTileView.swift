@@ -3,6 +3,8 @@ import SwiftUI
 struct SessionTileView: View {
     let session: SessionItem
     let isSelected: Bool
+    /// 1–9: the digit key that jumps here.
+    var number: Int?
     /// Whether this panel has keyboard focus; the selection dims when it doesn't.
     var isActive = true
 
@@ -27,7 +29,7 @@ struct SessionTileView: View {
                     .truncationMode(.middle)
             }
 
-            Text(session.state.label)
+            Text(session.attachID != nil && session.state == .detached ? "background" : session.state.label)
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
         }
@@ -38,6 +40,14 @@ struct SessionTileView: View {
             RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
                 .fill(Color.primary.opacity(isSelected ? (isActive ? 0.1 : 0.05) : (hovering ? 0.05 : 0)))
         )
+        .overlay(alignment: .topLeading) {
+            if let number {
+                Text("\(number)")
+                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .padding(Theme.Spacing.sm)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }

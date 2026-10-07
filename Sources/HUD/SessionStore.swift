@@ -18,7 +18,6 @@ final class SessionStore {
     private let overlayFileURL: URL
     private var overlayWatcher: FileWatcher?
     private var pollTimer: Timer?
-    private var branchCache: [String: String] = [:]
     private var transcriptCache: [String: URL] = [:]
     private let recaps = RecapReader()
     /// Serial, so overlapping refreshes (timer + file watcher) can't race on the caches.
@@ -72,11 +71,7 @@ final class SessionStore {
             let agents = Self.fetchAgents()
             let overlay = Self.loadOverlay(self.overlayFileURL)
             let panes = Self.tmuxPaneAttachment()
-            let merged = agents
-                .filter { $0.kind == "interactive" }
-                .compactMap { agent in
-                    agent.pid.map { self.buildItem(from: agent, pid: $0, overlay: overlay[agent.sessionId], panes: panes) }
-                }
+            let merged = agents.compactMap { self.buildItem(from: $0, overlay: overlay[$0.sessionId], panes: panes) }
             DispatchQueue.main.async {
                 self.sessions = merged
             }
@@ -84,12 +79,15 @@ final class SessionStore {
     }
 
     private func buildItem(
-        from agent: AgentEntry, pid: Int, overlay: OverlayEntry?, panes: [String: Bool]
-    ) -> SessionItem {
-        let tty = Self.tty(forPID: pid)
-        let detached = tty.flatMap { panes[$0] } == false
+        from agent: AgentEntry, overlay: OverlayEntry?, panes: [String: Bool]
+    ) -> SessionItem? {
+        let background = agent.kind == "background"
+        guard background || (agent.kind == "interactive" && agent.pid != nil) else { return nil }
+        let tty = agent.pid.flatMap(Self.tty(forPID:))
+        // A background agent has no terminal at all, same as a detached tmux session.
+        let detached = background || tty.flatMap { panes[$0] } == false
         let state: SessionState =
-            overlay?.needsYou == true ? .needsYou
+            overlay?.needsYou == true || agent.state == "blocked" ? .needsYou
             : detached ? .detached
             : agent.status == "busy" ? .working : .idle
         let recap = transcript(for: agent.sessionId).flatMap { recaps.recap(in: $0) }
@@ -97,12 +95,13 @@ final class SessionStore {
             id: agent.sessionId,
             name: agent.name,
             cwd: agent.cwd,
-            branch: branch(for: agent.cwd),
+            branch: Self.gitBranch(cwd: agent.cwd),
             state: state,
             note: recap?.text,
             notedAt: recap?.at,
             tty: tty,
-            pid: Int32(pid),
+            pid: agent.pid.map(Int32.init),
+            attachID: background ? (agent.id ?? agent.sessionId) : nil,
             updatedAt: Date()
         )
     }
@@ -118,13 +117,6 @@ final class SessionStore {
             .first { FileManager.default.fileExists(atPath: $0.path) }
         if let found { transcriptCache[sessionID] = found }
         return found
-    }
-
-    private func branch(for cwd: String) -> String? {
-        if let cached = branchCache[cwd] { return cached }
-        let value = Self.gitBranch(cwd: cwd)
-        if let value { branchCache[cwd] = value }
-        return value
     }
 
     // MARK: - Shelling out
@@ -186,6 +178,11 @@ final class SessionStore {
     /// recently active client to the session's pane, then raise that client.
     func jump(to session: SessionItem) {
         DispatchQueue.global(qos: .userInitiated).async {
+            if let id = session.attachID {
+                guard let claude = Self.resolveBinary("claude") else { return }
+                DispatchQueue.main.async { Self.openTerminal(claude, ["attach", id]) }
+                return
+            }
             var hostTTY = session.tty
             var hostPID = session.pid.map(Int.init)
             if let tty = session.tty, let tmux = Self.resolveBinary("tmux"),
@@ -199,7 +196,7 @@ final class SessionStore {
                     .max(by: { (Int($0[0]) ?? 0) < (Int($1[0]) ?? 0) })
                 else {
                     // No terminal attached anywhere: open one on this pane.
-                    DispatchQueue.main.async { Self.openTerminalAttached(tmux: tmux, pane: pane) }
+                    DispatchQueue.main.async { Self.openTerminal(tmux, ["attach", "-t", pane]) }
                     return
                 }
                 // Explicit -c: run from outside tmux there's no "current client".
@@ -239,15 +236,16 @@ final class SessionStore {
         NSWorkspace.shared.openApplication(at: url, configuration: config)
     }
 
-    /// New Terminal window running `tmux attach` on the pane (attach -t %id also
-    /// makes that pane current). Same Automation permission as bringForward.
-    private static func openTerminalAttached(tmux: String, pane: String) {
-        guard pane.range(of: #"^%\d+$"#, options: .regularExpression) != nil,
-              !tmux.contains("\""), !tmux.contains("\\")
+    /// New Terminal window running `binary args...`: `tmux attach -t %id` (which
+    /// also makes that pane current) or `claude attach <id>`. Same Automation
+    /// permission as bringForward. Validated: it's spliced into AppleScript, then a shell.
+    private static func openTerminal(_ binary: String, _ args: [String]) {
+        guard !binary.contains(where: { "\"\\'".contains($0) }),
+              args.allSatisfy({ $0.range(of: #"^[%A-Za-z0-9-]+$"#, options: .regularExpression) != nil })
         else { return }
         let script = """
         tell application "Terminal"
-            do script "'\(tmux)' attach -t \(pane)"
+            do script "'\(binary)' \(args.joined(separator: " "))"
             activate
         end tell
         """
@@ -298,15 +296,18 @@ final class SessionStore {
     }
 }
 
-/// Optional fields: background agents carry no `pid`/`status`, and one
-/// non-optional miss would fail decoding of the whole array.
+/// Optional fields: background agents carry no `pid`/`status` (they have a short
+/// `id` and a `state` instead), and one non-optional miss would fail decoding
+/// of the whole array.
 private struct AgentEntry: Decodable {
+    let id: String?
     let pid: Int?
     let cwd: String
     let kind: String
     let sessionId: String
     let name: String?
     let status: String?
+    let state: String?
 }
 
 private struct OverlayEntry: Decodable {
