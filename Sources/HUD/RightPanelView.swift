@@ -2,11 +2,12 @@ import SwiftUI
 
 struct RightPanelView: View {
     let store: SessionStore
+    let threadStore: ThreadStore
     let appState: HUDAppState
     var onJumped: () -> Void
 
     private var sessionCount: Int {
-        store.sorted.count
+        threadStore.threads.filter { $0.status != .done }.count
     }
 
     var body: some View {

@@ -18,7 +18,7 @@ final class PanelController {
 
     private let leftPanel: HUDPanel
     private let rightPanel: HUDPanel
-    private let threadStore = ThreadStore()
+    let threadStore = ThreadStore()
     let sessionStore = SessionStore()
     private let appState = HUDAppState()
     private(set) var isVisible = false
@@ -34,7 +34,7 @@ final class PanelController {
         leftPanel.contentView = NSHostingView(
             rootView: LeftPanelView(store: threadStore, appState: appState)
         )
-        rightPanel.contentView = NSHostingView(rootView: RightPanelView(store: sessionStore, appState: appState) { [weak self] in
+        rightPanel.contentView = NSHostingView(rootView: RightPanelView(store: sessionStore, threadStore: threadStore, appState: appState) { [weak self] in
             self?.hide()
         })
 

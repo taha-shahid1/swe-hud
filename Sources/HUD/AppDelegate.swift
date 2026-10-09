@@ -54,11 +54,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    /// Accent count in the menu bar while any session needs you, so a blocked
-    /// session gets noticed without opening the HUD.
+    /// Accent count in the menu bar of threads not marked done.
     private func trackNeedsYou() {
         let count = withObservationTracking {
-            panelController.sessionStore.sessions.filter { $0.state == .needsYou }.count
+            panelController.threadStore.threads.filter { $0.status != .done }.count
         } onChange: { [weak self] in
             DispatchQueue.main.async { self?.trackNeedsYou() }
         }
